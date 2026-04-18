@@ -35,7 +35,7 @@ jobs:
       - uses: komastudios/actions-oci/upload-artifact@v1
         with:
           service: gcs
-          bucket: ${{ vars.ARTIFACT_BUCKET }}
+          bucket: ${{ vars.ARTIFACTS_BUCKET }}
           prefix: my-project
           name: dist
           path: dist/
