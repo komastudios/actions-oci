@@ -1,0 +1,46 @@
+name: build and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check + test
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Commit dist/ changes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git add dist/
+          if git diff --cached --quiet; then
+            echo "dist/ is up to date, nothing to commit"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: update dist/ build artifacts"
+            git push
+          fi
+      - name: Move v1 tag to HEAD
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -fa v1 -m "v1 compatible release"
+          git push -f origin v1

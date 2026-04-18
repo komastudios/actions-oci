@@ -1,0 +1,27 @@
+{
+  "name": "actions-oci",
+  "description": "GitHub Action: upload artifacts as an OCI Image Layout on object storage",
+  "license": "MIT",
+  "private": true,
+  "main": "lib/upload-artifact.js",
+  "scripts": {
+    "build": "tsc && ncc build -o dist/upload-artifact src/upload-artifact.ts",
+    "test": "tsc --noEmit && jest --coverage"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/glob": "^0.5.0",
+    "@google-cloud/storage": "^7.15.0",
+    "archiver": "^7.0.1",
+    "p-retry": "^6.2.1"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.2",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.5.1",
+    "@vercel/ncc": "^0.38.1",
+    "jest": "^29.6.2",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.4.5"
+  }
+}

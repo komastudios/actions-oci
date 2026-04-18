@@ -1,0 +1,22 @@
+node_modules/
+lib/
+coverage/
+*.tsbuildinfo
+.DS_Store
+
+# Editor / tooling
+.vscode/
+.idea/
+.eslintcache
+
+# Test runtime fixtures
+__tests__/runner/*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.test

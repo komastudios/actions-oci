@@ -1,0 +1,95 @@
+name: "OCI artifact upload"
+author: komastudios
+description: "Upload files as an OCI Image Layout artifact to an S3-compatible bucket (GCS only in v1). Drop-in replacement for actions/upload-artifact@v6."
+inputs:
+  # ---- v6-compatible surface -------------------------------------------
+  name:
+    description: "Logical artifact name; becomes the OCI reference tag."
+    required: false
+    default: "artifact"
+  path:
+    description: "File / directory / wildcard pattern(s) to upload. Multi-line supported."
+    required: true
+  if-no-files-found:
+    description: "Behavior when the path matches nothing: warn | error | ignore."
+    required: false
+    default: "warn"
+  retention-days:
+    description: "Retention hint in days (1-90). Recorded in manifest annotations and as object metadata for bucket lifecycle rules."
+    required: false
+    default: ""
+  compression-level:
+    description: "Zlib compression level 0-9 applied to per-layer gzip encoding (and to the zip in archive mode)."
+    required: false
+    default: "6"
+  overwrite:
+    description: "If true, an existing manifests/<tag> entry is replaced. If false (default), the upload fails when the tag already exists."
+    required: false
+    default: "false"
+  include-hidden-files:
+    description: "If false (default), dotfiles and files under dot-directories are skipped."
+    required: false
+    default: "false"
+
+  # ---- backend ---------------------------------------------------------
+  service:
+    description: 'Storage backend. Only "gcs" is accepted in v1; any other value (or omission) fails the step.'
+    required: true
+  bucket:
+    description: "Bucket name (GCS)."
+    required: true
+  prefix:
+    description: "Key prefix under which the OCI layout lives. Must not start or end with /."
+    required: false
+    default: ""
+
+  # ---- OCI options -----------------------------------------------------
+  artifact-type:
+    description: "Value of .artifactType in the manifest (RFC 6838 media type)."
+    required: false
+    default: "application/vnd.github.actions.artifact.v1+json"
+  layer-media-type:
+    description: "Default mediaType for per-file layers."
+    required: false
+    default: "application/octet-stream"
+  archive:
+    description: "If true, bundle all matched files into a single ZIP layer (v6-compatible wire format). Default false: per-file layers with content-addressed dedup."
+    required: false
+    default: "false"
+  tag:
+    description: "OCI reference tag written to manifests/<tag>. Supports tokens: ${name}, ${sha}, ${run_id}, ${run_attempt}, ${job}, ${ref_slug}."
+    required: false
+    default: "${name}"
+  annotations:
+    description: "Extra manifest annotations, one key=value per line. Merged on top of the standard annotation set."
+    required: false
+    default: ""
+  subject-digest:
+    description: "If set (sha256:...), populates manifest .subject to attach this artifact as a referrer to another manifest."
+    required: false
+    default: ""
+outputs:
+  artifact-id:
+    description: "Manifest digest of this upload (sha256:...)."
+  artifact-digest:
+    description: "Alias of artifact-id."
+  artifact-url:
+    description: "Public HTTPS URL of the manifest blob under blobs/sha256/<hex>."
+  manifest-uri:
+    description: "gs:// URI of the manifest blob."
+  index-uri:
+    description: "gs:// URI of the regenerated index.json."
+  tag:
+    description: "Resolved reference tag (after token expansion)."
+  blob-count:
+    description: "Number of distinct blobs referenced by this manifest (layers + config + manifest)."
+  bytes-uploaded:
+    description: "Bytes actually transferred in this run (excludes blobs skipped because they were already present)."
+  bytes-deduplicated:
+    description: "Bytes not transferred because a blob with the same digest already existed in the bucket."
+runs:
+  using: node24
+  main: "dist/upload-artifact/index.js"
+branding:
+  icon: "upload-cloud"
+  color: "gray-dark"
