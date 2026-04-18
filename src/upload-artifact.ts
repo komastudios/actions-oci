@@ -276,10 +276,12 @@ async function main(): Promise<void> {
   core.setOutput("bytes-deduplicated", String(transferStats.deduplicated));
 
   // Per-file upload report, Docker-style short digest (first 12 hex chars)
-  // + uncompressed size + title. Split into "pushed" (new PUTs) and
-  // "already present" (dedup hits — same content-addressed blob was found
-  // in the bucket and skipped). For pushed blobs whose gzipped form was
-  // actually stored, the stored/wire size is shown in a trailing note.
+  // + uncompressed size + title. Lists only the blobs we actually PUT;
+  // dedup'd layers are summarised in the totals line below — no per-file
+  // "already present" section (callers with dozens of matrix artifacts
+  // don't need to scroll past them on every run).
+  // For pushed blobs whose gzipped form was actually stored, the
+  // stored/wire size is shown in a trailing note.
   const pushed = layerResults.filter((r) => r.pushed);
   const dedup = layerResults.filter((r) => !r.pushed);
 
@@ -293,16 +295,11 @@ async function main(): Promise<void> {
         core.info(line);
       }
     }
-  }
-  if (dedup.length > 0) {
-    core.info(`${dedup.length} blob(s) already present:`);
-    for (const r of dedup) {
-      core.info(
-        `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`,
-      );
-    }
-  }
-  if (pushed.length === 0 && dedup.length === 0) {
+  } else if (dedup.length > 0) {
+    core.info(
+      `no new blobs — all ${dedup.length} layer(s) already present in the bucket`,
+    );
+  } else {
     core.info("no layer blobs to report");
   }
 
