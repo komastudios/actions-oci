@@ -5,12 +5,11 @@ import { ObjectMeta, PutOpts, StorageClient } from "./index";
 /**
  * In-memory StorageClient for tests. Keys are tracked with their bytes,
  * content-type, and custom metadata. `ifNoneMatch: "*"` is honoured.
- * `publicRead` is recorded as a metadata flag so tests can assert scoping.
  */
 export class MemoryStorageClient implements StorageClient {
   readonly objects = new Map<
     string,
-    { body: Buffer; meta: ObjectMeta; publicRead: boolean }
+    { body: Buffer; meta: ObjectMeta }
   >();
   constructor(
     public readonly bucket: string = "test-bucket",
@@ -37,7 +36,7 @@ export class MemoryStorageClient implements StorageClient {
       contentType: opts.contentType,
       metadata: { ...(opts.metadata ?? {}) },
     };
-    this.objects.set(key, { body: bytes, meta, publicRead: opts.publicRead === true });
+    this.objects.set(key, { body: bytes, meta });
     return { ...meta, metadata: { ...meta.metadata } };
   }
 
@@ -65,10 +64,6 @@ export class MemoryStorageClient implements StorageClient {
   // Test helpers -----------------------------------------------------------
   bodyOf(key: string): Buffer | undefined {
     return this.objects.get(key)?.body;
-  }
-
-  isPublic(key: string): boolean {
-    return this.objects.get(key)?.publicRead === true;
   }
 }
 

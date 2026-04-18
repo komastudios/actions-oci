@@ -76,7 +76,7 @@ two new ones are required:
 |---|---|
 | `artifact-id` | Manifest digest (`sha256:…`). |
 | `artifact-digest` | Alias of `artifact-id`. |
-| `artifact-url` | Public HTTPS URL of the manifest blob under `blobs/sha256/…`. |
+| `artifact-url` | `gs://…` URI of the manifest blob under `blobs/sha256/…`. (Identical to `manifest-uri` in v1 since the bucket is not public.) |
 | `manifest-uri` | `gs://…` URI of the manifest blob. |
 | `index-uri` | `gs://…` URI of the regenerated `index.json`. |
 | `tag` | Resolved reference tag (after token expansion). |
@@ -102,11 +102,11 @@ The action writes an OCI Image Layout under `gs://<bucket>/<prefix>/`:
         └── <manifest-digest>   # the manifest, stored here too for OCI tooling
 ```
 
-Uploads under `blobs/sha256/` are written with `predefinedAcl:
-publicRead` so they are directly fetchable over anonymous HTTPS.
-Everything else (`manifests/<tag>`, `index.json`, `oci-layout`) inherits
-the bucket's default ACL and is only readable by principals with
-`storage.objects.get` on the bucket.
+All uploaded objects inherit the bucket's default ACL — the action does
+**not** set any per-object ACL directives. Access is controlled entirely
+via bucket IAM: principals with `storage.objects.get` on the bucket (or
+its prefix) can read, nobody else can. This is Uniform Bucket-Level
+Access (UBLA) friendly.
 
 ## Index regeneration strategy
 
@@ -130,9 +130,6 @@ Benefits:
 
 ## Bucket prerequisites
 
-- **Uniform Bucket-Level Access must be OFF.** The action sets
-  `predefinedAcl: publicRead` on every blob PUT; UBLA-enabled buckets
-  reject that directive and the step fails with a specific error.
 - **IAM** on the target bucket (the service account that the workflow
   assumes via Workload Identity Federation):
   - `storage.objects.create`
@@ -142,6 +139,8 @@ Benefits:
 - **Credentials** come from Application Default Credentials. Run
   `google-github-actions/auth@v2` with WIF in the job before this
   action. No credentials are accepted as inputs.
+- Uniform Bucket-Level Access can be enabled or disabled — the action
+  works either way since it never sets per-object ACLs.
 
 ## License
 

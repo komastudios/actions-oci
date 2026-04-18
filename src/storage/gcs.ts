@@ -13,7 +13,9 @@ import { joinKey, ObjectMeta, PutOpts, StorageClient } from "./index";
  *   ListObjectsV2       → bucket.getFiles({ prefix, autoPaginate: true })
  *   x-amz-meta-*        → metadata.metadata  (nested object)
  *   Cache-Control       → metadata.cacheControl
- *   publicRead ACL      → predefinedAcl: 'publicRead'
+ *
+ * Uploaded objects inherit the bucket's default ACL — no per-object ACL
+ * directives are set. Configure bucket access via IAM (UBLA-friendly).
  */
 export class GcsStorageClient implements StorageClient {
   private readonly storage: Storage;
@@ -53,9 +55,6 @@ export class GcsStorageClient implements StorageClient {
     };
     if (opts.ifNoneMatch === "*") {
       saveOpts.preconditionOpts = { ifGenerationMatch: 0 };
-    }
-    if (opts.publicRead) {
-      saveOpts.predefinedAcl = "publicRead";
     }
 
     const file = this.file(key);

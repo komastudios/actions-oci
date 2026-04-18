@@ -74,7 +74,7 @@ outputs:
   artifact-digest:
     description: "Alias of artifact-id."
   artifact-url:
-    description: "Public HTTPS URL of the manifest blob under blobs/sha256/<hex>."
+    description: "gs:// URI of the manifest blob under blobs/sha256/<hex>. (Identical to manifest-uri since v1 does not make objects publicly readable.)"
   manifest-uri:
     description: "gs:// URI of the manifest blob."
   index-uri:

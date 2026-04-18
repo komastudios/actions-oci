@@ -44,11 +44,6 @@ export interface PutOpts {
    * blobs in blobs/sha256/ (those are preceded by a HEAD probe).
    */
   ifNoneMatch?: "*";
-  /**
-   * If true, the object is PUT with public-read ACL (anyone can fetch via
-   * HTTPS without auth). Scoped by callers to the `blobs/` subtree only.
-   */
-  publicRead?: boolean;
 }
 
 /**

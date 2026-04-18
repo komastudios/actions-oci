@@ -191,7 +191,6 @@ async function main(): Promise<void> {
     await storage.putBlob(manifestBlobKey, manifestBytes, {
       contentType: MEDIA_TYPE_MANIFEST,
       cacheControl: CACHE_CONTROL_IMMUTABLE,
-      publicRead: true,
       metadata: blobMetadata(manifestDigestRef, retentionDays),
     });
     transferStats.uploaded += manifestDigest.size;
@@ -266,7 +265,7 @@ async function main(): Promise<void> {
   const blobCount = layers.length + 2; // layers + empty config + manifest
   core.setOutput("artifact-id", manifestDigestRef);
   core.setOutput("artifact-digest", manifestDigestRef);
-  core.setOutput("artifact-url", storage.publicUrl(manifestBlobKey));
+  core.setOutput("artifact-url", storage.backendUri(manifestBlobKey));
   core.setOutput("manifest-uri", storage.backendUri(manifestBlobKey));
   core.setOutput("index-uri", storage.backendUri("index.json"));
   core.setOutput("tag", resolvedTag);
@@ -306,7 +305,6 @@ async function ensureEmptyConfigBlob(
   await storage.putBlob(key, EMPTY_CONFIG_BYTES, {
     contentType: "application/vnd.oci.empty.v1+json",
     cacheControl: CACHE_CONTROL_IMMUTABLE,
-    publicRead: true,
     metadata: blobMetadata(
       "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
       retentionDays,
@@ -358,7 +356,6 @@ async function uploadBlob(
       await storage.putBlob(key, createReadStream(uploadPath), {
         contentType: mediaType,
         cacheControl: CACHE_CONTROL_IMMUTABLE,
-        publicRead: true,
         metadata: blobMetadata(digestRef, opts.retentionDays),
       });
       opts.stats.uploaded += digest.size;
