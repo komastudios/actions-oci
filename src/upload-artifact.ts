@@ -289,7 +289,7 @@ async function main(): Promise<void> {
     for (const r of pushed) {
       const line = `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`;
       if (r.storedSize !== undefined && r.storedSize !== r.size) {
-        core.info(`${line}   (${r.storedSize} B stored, gzip)`);
+        core.info(`${line}   (${humanBytes(r.storedSize)} stored, gzip)`);
       } else {
         core.info(line);
       }
@@ -307,8 +307,27 @@ async function main(): Promise<void> {
     `${resolvedTag}: digest: ${manifestDigestRef} size: ${manifestDigest.size}`,
   );
   core.info(
-    `  ${blobCount} blobs, ${transferStats.uploaded} B uploaded, ${transferStats.deduplicated} B deduplicated`,
+    `  ${blobCount} blobs, ${humanBytes(transferStats.uploaded)} uploaded, ${humanBytes(transferStats.deduplicated)} deduplicated`,
   );
+}
+
+/**
+ * Format a byte count in binary (1024-based) units with IEC suffixes.
+ * Bare bytes get no decimals; larger units get one decimal place.
+ *   0 B, 1 B, 1023 B, 1.0 KiB, 2.3 KiB, 1.5 MiB, 3.2 GiB, 1.0 TiB
+ */
+function humanBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return `${n} B`;
+  const KIB = 1024;
+  if (n < KIB) return `${n} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+  let v = n / KIB;
+  let i = 0;
+  while (v >= KIB && i < units.length - 1) {
+    v /= KIB;
+    i++;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
 }
 
 // ---------------------------------------------------------------------------
