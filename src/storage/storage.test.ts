@@ -1,4 +1,5 @@
 import { createClient, normalizePrefix, joinKey } from "./index";
+import { MemoryStorageClient } from "./memory";
 
 describe("createClient factory", () => {
   test('accepts service: "gcs"', () => {
@@ -34,5 +35,25 @@ describe("joinKey", () => {
   test("non-empty prefix joins with a single slash", () => {
     expect(joinKey("proj", "foo")).toBe("proj/foo");
     expect(joinKey("proj/sub", "blobs/sha256/abc")).toBe("proj/sub/blobs/sha256/abc");
+  });
+});
+
+describe("contentEncoding round-trips through MemoryStorageClient", () => {
+  test("putBlob records the contentEncoding flag when set, elides it when omitted", async () => {
+    const m = new MemoryStorageClient();
+    const bytes = Buffer.from("some bytes");
+
+    await m.putBlob("blobs/sha256/raw", bytes, {
+      contentType: "application/octet-stream",
+    });
+    await m.putBlob("blobs/sha256/gzip", bytes, {
+      contentType: "application/octet-stream",
+      contentEncoding: "gzip",
+    });
+
+    const raw = await m.head("blobs/sha256/raw");
+    const gz = await m.head("blobs/sha256/gzip");
+    expect(raw?.contentEncoding).toBeUndefined();
+    expect(gz?.contentEncoding).toBe("gzip");
   });
 });

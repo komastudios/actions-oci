@@ -13,8 +13,6 @@ import { sha256Buffer, sha256File, gzipFileToTemp } from "./oci/digest";
 import {
   EMPTY_CONFIG_BYTES,
   MEDIA_TYPE_MANIFEST,
-  detectMediaType,
-  withGzipSuffix,
 } from "./oci/media-types";
 import {
   buildIndex,
@@ -63,8 +61,11 @@ async function main(): Promise<void> {
   const artifactType =
     core.getInput("artifact-type", { required: false }) ||
     "application/vnd.github.actions.artifact.v1+json";
-  const defaultLayerMediaType =
-    core.getInput("layer-media-type", { required: false }) || "application/octet-stream";
+  // layer-media-type is read but currently unused: we always set
+  // mediaType=application/octet-stream on layer descriptors, since the
+  // wire encoding is handled by GCS transcoding rather than encoded into
+  // the descriptor. Kept as an input for API compat.
+  void core.getInput("layer-media-type", { required: false });
   const tagTemplate = core.getInput("tag", { required: false }) || "${name}";
   const annotationsInput = core.getInput("annotations", { required: false });
   const subjectDigest = core.getInput("subject-digest", { required: false });
@@ -137,8 +138,8 @@ async function main(): Promise<void> {
   if (archive) {
     const zip = await zipFilesToTemp(filtered, commonRoot, compressionLevel);
     try {
+      // The zip itself is already compressed — don't gzip-on-upload again.
       const layer = await uploadBlob(storage, zip.path, {
-        mediaType: "application/zip",
         titleAnnotation: `${name}.zip`,
         stats: transferStats,
         retentionDays,
@@ -152,9 +153,7 @@ async function main(): Promise<void> {
   } else {
     for (const abs of filtered) {
       const rel = toPosix(relative(commonRoot, abs));
-      const baseMedia = detectMediaType(rel, defaultLayerMediaType);
       const layer = await uploadBlob(storage, abs, {
-        mediaType: baseMedia,
         titleAnnotation: rel,
         stats: transferStats,
         retentionDays,
@@ -277,24 +276,21 @@ async function main(): Promise<void> {
   core.setOutput("bytes-deduplicated", String(transferStats.deduplicated));
 
   // Per-file upload report, Docker-style short digest (first 12 hex chars)
-  // + size + title. Split into "pushed" (new PUTs) and "already present"
-  // (dedup hits — same content-addressed blob was found in the bucket and
-  // skipped). For pushed-and-compressed layers we also print the
-  // uncompressed source digest + size so downstream consumers have the
-  // full chain (source sha256 → compressed sha256 → stored blob).
+  // + uncompressed size + title. Split into "pushed" (new PUTs) and
+  // "already present" (dedup hits — same content-addressed blob was found
+  // in the bucket and skipped). For pushed blobs whose gzipped form was
+  // actually stored, the stored/wire size is shown in a trailing note.
   const pushed = layerResults.filter((r) => r.pushed);
   const dedup = layerResults.filter((r) => !r.pushed);
 
   if (pushed.length > 0) {
     core.info(`pushed ${pushed.length} new blob(s):`);
     for (const r of pushed) {
-      core.info(
-        `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`,
-      );
-      if (r.sourceDigestHex !== undefined && r.sourceSize !== undefined) {
-        core.info(
-          `    ↳ source sha256:${r.sourceDigestHex}  (${r.sourceSize} B, gzipped)`,
-        );
+      const line = `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`;
+      if (r.storedSize !== undefined && r.storedSize !== r.size) {
+        core.info(`${line}   (${r.storedSize} B stored, gzip)`);
+      } else {
+        core.info(line);
       }
     }
   }
@@ -357,10 +353,10 @@ async function ensureEmptyConfigBlob(
 }
 
 interface UploadBlobOpts {
-  mediaType: string;
   titleAnnotation: string;
   stats: { uploaded: number; deduplicated: number };
   retentionDays?: number;
+  /** If true, try gzip; upload gzipped only when it actually saves size. */
   compress: boolean;
   compressionLevel?: number;
 }
@@ -369,94 +365,100 @@ interface UploadBlobResult {
   descriptor: Descriptor;
   /** true if a PUT was issued; false if the blob already existed and we skipped. */
   pushed: boolean;
-  /** raw sha256 hex (no "sha256:" prefix) of the stored blob bytes (post-compression if compressed). */
+  /** sha256 hex (no "sha256:" prefix) of the **uncompressed** source bytes. */
   digestHex: string;
-  /** Size of the stored blob in bytes. */
+  /** Uncompressed size in bytes — matches the OCI descriptor's `size`. */
   size: number;
+  /**
+   * Bytes actually transferred to the bucket (compressed size if we
+   * stored gzipped, same as `size` otherwise, 0 on dedup). Informational.
+   */
+  storedSize?: number;
   /** Title annotation (relative path for per-file, name.zip for archive). */
   title: string;
-  /** Uncompressed source digest, set only when the layer was gzipped on upload. */
-  sourceDigestHex?: string;
-  /** Uncompressed source size in bytes, paired with sourceDigestHex. */
-  sourceSize?: number;
 }
 
+/**
+ * Upload a single content blob. The blob is dedup'd by the sha256 of its
+ * **uncompressed** bytes — that is the digest we record in the OCI
+ * descriptor, and it is what downstream consumers verify after pulling
+ * through GCS transcoding. When `opts.compress` is true we optimistically
+ * gzip; if the gzipped form is smaller, we PUT that with
+ * `Content-Encoding: gzip`. Otherwise we PUT the raw bytes.
+ */
 async function uploadBlob(
   storage: StorageClient,
   absPath: string,
   opts: UploadBlobOpts,
 ): Promise<UploadBlobResult> {
+  // 1. Hash the source exactly once; this digest drives everything
+  //    downstream — dedup key, manifest descriptor, output summary.
+  const source = await sha256File(absPath);
+  const digestRef = `sha256:${source.hex}`;
+  const key = `blobs/sha256/${source.hex}`;
+
+  // 2. HEAD-probe the uncompressed digest. If present, we're done —
+  //    dedup hit. The stored object may be gzipped or raw; either is
+  //    fine because GCS transcoding reconciles the wire shape at read.
+  const existing = await storage.head(key);
+  if (existing) {
+    opts.stats.deduplicated += source.size;
+    return {
+      descriptor: {
+        mediaType: "application/octet-stream",
+        digest: digestRef,
+        size: source.size,
+        annotations: { "org.opencontainers.image.title": opts.titleAnnotation },
+      },
+      pushed: false,
+      digestHex: source.hex,
+      size: source.size,
+      storedSize: 0,
+      title: opts.titleAnnotation,
+    };
+  }
+
+  // 3. Decide the wire form. `compress: true` + gzip-wins → upload
+  //    gzipped with Content-Encoding: gzip. Otherwise upload raw.
   let uploadPath = absPath;
   let cleanup: (() => Promise<void>) | undefined;
-  let mediaType = opts.mediaType;
-  const encodingAnnotation: Record<string, string> = {};
-  let uncompressedHex: string | undefined;
-  let uncompressedSize: number | undefined;
+  let contentEncoding: string | undefined;
+  let wireSize = source.size;
 
   if (opts.compress) {
-    // Digest the uncompressed source first so downstream consumers
-    // (e.g. download_plugins.ps1) can verify the decompressed bytes
-    // against a known-good sha256, rather than trusting gzip alone.
-    // One extra streamed read of absPath — fine at our file sizes.
-    const uncompressed = await sha256File(absPath);
-    uncompressedHex = uncompressed.hex;
-    uncompressedSize = uncompressed.size;
-
     const gz = await gzipFileToTemp(absPath, opts.compressionLevel ?? 6);
-    uploadPath = gz.path;
-    cleanup = gz.cleanup;
-    const gzipMedia = withGzipSuffix(mediaType);
-    if (gzipMedia) {
-      mediaType = gzipMedia;
+    if (gz.size < source.size) {
+      uploadPath = gz.path;
+      cleanup = gz.cleanup;
+      contentEncoding = "gzip";
+      wireSize = gz.size;
     } else {
-      encodingAnnotation["io.github.actions.artifact.encoding"] = "gzip";
+      // Gzip didn't help — keep the original. Temp file goes away.
+      await gz.cleanup();
     }
-    encodingAnnotation["io.github.actions.artifact.uncompressed-digest"] =
-      `sha256:${uncompressed.hex}`;
-    encodingAnnotation["io.github.actions.artifact.uncompressed-size"] =
-      String(uncompressed.size);
   }
 
   try {
-    const digest = await sha256File(uploadPath);
-    const digestRef = `sha256:${digest.hex}`;
-    const key = `blobs/sha256/${digest.hex}`;
+    await storage.putBlob(key, createReadStream(uploadPath), {
+      contentType: "application/octet-stream",
+      contentEncoding,
+      cacheControl: CACHE_CONTROL_IMMUTABLE,
+      metadata: blobMetadata(digestRef, opts.retentionDays),
+    });
+    opts.stats.uploaded += wireSize;
 
-    // HEAD-probe first; only PUT if the content-addressed blob isn't
-    // already present. This is the dedup contract — the whole reason
-    // for a content-addressed store. Uses the COMPRESSED digest (what
-    // actually gets stored), never the uncompressed source digest.
-    const existing = await storage.head(key);
-    let pushed = false;
-    if (!existing) {
-      await storage.putBlob(key, createReadStream(uploadPath), {
-        contentType: mediaType,
-        cacheControl: CACHE_CONTROL_IMMUTABLE,
-        metadata: blobMetadata(digestRef, opts.retentionDays),
-      });
-      opts.stats.uploaded += digest.size;
-      pushed = true;
-    } else {
-      opts.stats.deduplicated += digest.size;
-    }
-
-    const descriptor: Descriptor = {
-      mediaType,
-      digest: digestRef,
-      size: digest.size,
-      annotations: {
-        "org.opencontainers.image.title": opts.titleAnnotation,
-        ...encodingAnnotation,
-      },
-    };
     return {
-      descriptor,
-      pushed,
-      digestHex: digest.hex,
-      size: digest.size,
+      descriptor: {
+        mediaType: "application/octet-stream",
+        digest: digestRef,
+        size: source.size,
+        annotations: { "org.opencontainers.image.title": opts.titleAnnotation },
+      },
+      pushed: true,
+      digestHex: source.hex,
+      size: source.size,
+      storedSize: wireSize,
       title: opts.titleAnnotation,
-      sourceDigestHex: uncompressedHex,
-      sourceSize: uncompressedSize,
     };
   } finally {
     if (cleanup) await cleanup();

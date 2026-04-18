@@ -34,6 +34,7 @@ export class MemoryStorageClient implements StorageClient {
       key,
       size: bytes.length,
       contentType: opts.contentType,
+      contentEncoding: opts.contentEncoding,
       metadata: { ...(opts.metadata ?? {}) },
     };
     this.objects.set(key, { body: bytes, meta });

@@ -50,6 +50,9 @@ export class GcsStorageClient implements StorageClient {
       resumable: false,
       metadata: {
         cacheControl: opts.cacheControl,
+        // contentEncoding goes on the object metadata (not the custom .metadata
+        // bag). GCS uses it to decide whether to transcode on read.
+        contentEncoding: opts.contentEncoding,
         metadata: opts.metadata ?? {},
       },
     };
@@ -114,11 +117,13 @@ function gcsMetadataToObjectMeta(
   const contentType = String(
     (m as { contentType?: string }).contentType ?? "application/octet-stream",
   );
+  const contentEncoding = (m as { contentEncoding?: string }).contentEncoding;
   const custom = ((m as { metadata?: Record<string, string> }).metadata ?? {}) as Record<string, string>;
   return {
     key: relKey,
     size,
     contentType,
+    contentEncoding,
     metadata: { ...custom },
   };
 }

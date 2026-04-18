@@ -30,12 +30,24 @@ export interface ObjectMeta {
   key: string;
   size: number;
   contentType: string;
+  /**
+   * If the object was uploaded with Content-Encoding set (e.g. "gzip"),
+   * this is that value. Undefined for uncompressed uploads.
+   */
+  contentEncoding?: string;
   /** Custom user-metadata (x-goog-meta-* on GCS). All values are strings. */
   metadata: Record<string, string>;
 }
 
 export interface PutOpts {
   contentType: string;
+  /**
+   * HTTP Content-Encoding of the bytes being uploaded. When set to "gzip",
+   * the bucket stores the bytes as-is and GCS transcoding will serve them
+   * decompressed to clients that do not send Accept-Encoding: gzip.
+   * See https://docs.cloud.google.com/storage/docs/transcoding.
+   */
+  contentEncoding?: string;
   cacheControl?: string;
   metadata?: Record<string, string>;
   /**

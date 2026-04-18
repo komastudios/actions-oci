@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdtemp, rm } from "fs/promises";
+import { readFile, writeFile, mkdtemp, rm, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -28,37 +28,43 @@ describe("sha256Buffer", () => {
 });
 
 describe("gzipFileToTemp", () => {
-  test("normalises the OS byte to 0xff for deterministic cross-runner digests", async () => {
+  test("returns a usable gzipped file with reported size matching on-disk size", async () => {
     const dir = await mkdtemp(join(tmpdir(), "actions-oci-gz-test-"));
     try {
       const src = join(dir, "input.txt");
-      await writeFile(src, "deterministic gzip please\n".repeat(40), "utf8");
+      // Highly compressible input so we actually see a size reduction.
+      await writeFile(src, "aaaaaaaaaaaaaaaa\n".repeat(500), "utf8");
 
-      const gz1 = await gzipFileToTemp(src, 6);
+      const gz = await gzipFileToTemp(src, 6);
       try {
-        const bytes = await readFile(gz1.path);
+        const bytes = await readFile(gz.path);
+        const onDisk = await stat(gz.path);
+        expect(gz.size).toBe(onDisk.size);
         expect(bytes[0]).toBe(0x1f);
         expect(bytes[1]).toBe(0x8b);
-        expect(bytes.readUInt32LE(4)).toBe(0); // MTIME always 0
-        expect(bytes[9]).toBe(0xff); // OS byte normalised
+        // Gzip clearly wins on this input.
+        const srcStat = await stat(src);
+        expect(gz.size).toBeLessThan(srcStat.size);
       } finally {
-        await gz1.cleanup();
+        await gz.cleanup();
       }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  test("same input + level produces identical output bytes across two calls", async () => {
+  test("two calls on the same input produce identical bytes on the same runner", async () => {
+    // Not a correctness invariant anymore (stored blob digest is always the
+    // uncompressed digest), but cheap and nice-to-have for cache hit-rate
+    // stability within a single runner.
     const dir = await mkdtemp(join(tmpdir(), "actions-oci-gz-test-"));
     try {
       const src = join(dir, "input.txt");
       await writeFile(src, "stability check\n".repeat(200), "utf8");
-
       const a = await gzipFileToTemp(src, 6);
       const b = await gzipFileToTemp(src, 6);
       try {
-        expect(a.digest).toEqual(b.digest);
+        expect(a.size).toBe(b.size);
         const bytesA = await readFile(a.path);
         const bytesB = await readFile(b.path);
         expect(bytesA.equals(bytesB)).toBe(true);

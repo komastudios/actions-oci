@@ -108,6 +108,32 @@ via bucket IAM: principals with `storage.objects.get` on the bucket (or
 its prefix) can read, nobody else can. This is Uniform Bucket-Level
 Access (UBLA) friendly.
 
+## Compression via GCS transcoding
+
+Layer blobs are content-addressed by the sha256 of their
+**uncompressed** bytes — that is always the value of the `digest`
+field in every OCI descriptor. Whether the on-bucket object is stored
+gzip-compressed is a transport optimization:
+
+- On upload, when `compression-level > 0` (default `6`) and gzip
+  actually shrinks the file, the action PUTs the gzipped bytes with
+  `Content-Encoding: gzip` in the object metadata. If gzip does not
+  shrink the file, the raw bytes are stored.
+- On read, GCS [decompressive transcoding][transcoding] kicks in
+  automatically: clients that send `Accept-Encoding: gzip` receive
+  the stored bytes as-is and are expected to decompress; clients that
+  don't are served inflated bytes by GCS directly.
+- `Cache-Control: no-transform` is **never** set — that would disable
+  transcoding. Blobs use `public, max-age=31536000, immutable` which
+  is compatible.
+
+This means the manifest does not need — and no longer carries —
+`io.github.actions.artifact.{encoding,uncompressed-digest,uncompressed-size}`
+annotations; `digest` is always the final-bytes-on-disk digest on the
+consumer side. `mediaType` is always `application/octet-stream`.
+
+[transcoding]: https://docs.cloud.google.com/storage/docs/transcoding
+
 ## Index regeneration strategy
 
 Unlike the S3-oriented spec this is derived from, `index.json` is **not
