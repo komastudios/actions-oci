@@ -367,6 +367,11 @@ async function uploadBlob(
   const encodingAnnotation: Record<string, string> = {};
 
   if (opts.compress) {
+    // Digest the uncompressed source first so downstream consumers
+    // (e.g. download_plugins.ps1) can verify the decompressed bytes
+    // against a known-good sha256, rather than trusting gzip alone.
+    // One extra streamed read of absPath — fine at our file sizes.
+    const uncompressed = await sha256File(absPath);
     const gz = await gzipFileToTemp(absPath, opts.compressionLevel ?? 6);
     uploadPath = gz.path;
     cleanup = gz.cleanup;
@@ -376,6 +381,10 @@ async function uploadBlob(
     } else {
       encodingAnnotation["io.github.actions.artifact.encoding"] = "gzip";
     }
+    encodingAnnotation["io.github.actions.artifact.uncompressed-digest"] =
+      `sha256:${uncompressed.hex}`;
+    encodingAnnotation["io.github.actions.artifact.uncompressed-size"] =
+      String(uncompressed.size);
   }
 
   try {
