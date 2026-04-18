@@ -276,17 +276,38 @@ async function main(): Promise<void> {
   core.setOutput("bytes-uploaded", String(transferStats.uploaded));
   core.setOutput("bytes-deduplicated", String(transferStats.deduplicated));
 
-  // Per-file upload report: list only the blobs we just PUT. Docker-style
-  // short digest (first 12 hex chars) + size + title. Omits layers that
-  // were deduplicated against a prior upload.
+  // Per-file upload report, Docker-style short digest (first 12 hex chars)
+  // + size + title. Split into "pushed" (new PUTs) and "already present"
+  // (dedup hits — same content-addressed blob was found in the bucket and
+  // skipped). For pushed-and-compressed layers we also print the
+  // uncompressed source digest + size so downstream consumers have the
+  // full chain (source sha256 → compressed sha256 → stored blob).
   const pushed = layerResults.filter((r) => r.pushed);
+  const dedup = layerResults.filter((r) => !r.pushed);
+
   if (pushed.length > 0) {
     core.info(`pushed ${pushed.length} new blob(s):`);
     for (const r of pushed) {
-      core.info(`  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`);
+      core.info(
+        `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`,
+      );
+      if (r.sourceDigestHex !== undefined && r.sourceSize !== undefined) {
+        core.info(
+          `    ↳ source sha256:${r.sourceDigestHex}  (${r.sourceSize} B, gzipped)`,
+        );
+      }
     }
-  } else {
-    core.info("no new blobs pushed — all layers were already present");
+  }
+  if (dedup.length > 0) {
+    core.info(`${dedup.length} blob(s) already present:`);
+    for (const r of dedup) {
+      core.info(
+        `  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`,
+      );
+    }
+  }
+  if (pushed.length === 0 && dedup.length === 0) {
+    core.info("no layer blobs to report");
   }
 
   // Final status line, Docker `docker push` convention:
@@ -348,12 +369,16 @@ interface UploadBlobResult {
   descriptor: Descriptor;
   /** true if a PUT was issued; false if the blob already existed and we skipped. */
   pushed: boolean;
-  /** raw sha256 hex (no "sha256:" prefix) of the (possibly compressed) blob. */
+  /** raw sha256 hex (no "sha256:" prefix) of the stored blob bytes (post-compression if compressed). */
   digestHex: string;
-  /** Size of the uploaded blob in bytes. */
+  /** Size of the stored blob in bytes. */
   size: number;
   /** Title annotation (relative path for per-file, name.zip for archive). */
   title: string;
+  /** Uncompressed source digest, set only when the layer was gzipped on upload. */
+  sourceDigestHex?: string;
+  /** Uncompressed source size in bytes, paired with sourceDigestHex. */
+  sourceSize?: number;
 }
 
 async function uploadBlob(
@@ -365,6 +390,8 @@ async function uploadBlob(
   let cleanup: (() => Promise<void>) | undefined;
   let mediaType = opts.mediaType;
   const encodingAnnotation: Record<string, string> = {};
+  let uncompressedHex: string | undefined;
+  let uncompressedSize: number | undefined;
 
   if (opts.compress) {
     // Digest the uncompressed source first so downstream consumers
@@ -372,6 +399,9 @@ async function uploadBlob(
     // against a known-good sha256, rather than trusting gzip alone.
     // One extra streamed read of absPath — fine at our file sizes.
     const uncompressed = await sha256File(absPath);
+    uncompressedHex = uncompressed.hex;
+    uncompressedSize = uncompressed.size;
+
     const gz = await gzipFileToTemp(absPath, opts.compressionLevel ?? 6);
     uploadPath = gz.path;
     cleanup = gz.cleanup;
@@ -394,7 +424,8 @@ async function uploadBlob(
 
     // HEAD-probe first; only PUT if the content-addressed blob isn't
     // already present. This is the dedup contract — the whole reason
-    // for a content-addressed store.
+    // for a content-addressed store. Uses the COMPRESSED digest (what
+    // actually gets stored), never the uncompressed source digest.
     const existing = await storage.head(key);
     let pushed = false;
     if (!existing) {
@@ -424,6 +455,8 @@ async function uploadBlob(
       digestHex: digest.hex,
       size: digest.size,
       title: opts.titleAnnotation,
+      sourceDigestHex: uncompressedHex,
+      sourceSize: uncompressedSize,
     };
   } finally {
     if (cleanup) await cleanup();
