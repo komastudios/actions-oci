@@ -132,6 +132,7 @@ async function main(): Promise<void> {
   // ---- 3. Upload content blobs (dedup-aware) ----------------------------
   const transferStats = { uploaded: 0, deduplicated: 0 };
   const layers: Descriptor[] = [];
+  const layerResults: UploadBlobResult[] = [];
 
   if (archive) {
     const zip = await zipFilesToTemp(filtered, commonRoot, compressionLevel);
@@ -143,7 +144,8 @@ async function main(): Promise<void> {
         retentionDays,
         compress: false,
       });
-      layers.push(layer);
+      layers.push(layer.descriptor);
+      layerResults.push(layer);
     } finally {
       await zip.cleanup();
     }
@@ -159,7 +161,8 @@ async function main(): Promise<void> {
         compress: compressionLevel > 0,
         compressionLevel,
       });
-      layers.push(layer);
+      layers.push(layer.descriptor);
+      layerResults.push(layer);
     }
   }
 
@@ -273,8 +276,27 @@ async function main(): Promise<void> {
   core.setOutput("bytes-uploaded", String(transferStats.uploaded));
   core.setOutput("bytes-deduplicated", String(transferStats.deduplicated));
 
+  // Per-file upload report: list only the blobs we just PUT. Docker-style
+  // short digest (first 12 hex chars) + size + title. Omits layers that
+  // were deduplicated against a prior upload.
+  const pushed = layerResults.filter((r) => r.pushed);
+  if (pushed.length > 0) {
+    core.info(`pushed ${pushed.length} new blob(s):`);
+    for (const r of pushed) {
+      core.info(`  ${r.digestHex.slice(0, 12)}  ${r.size.toString().padStart(10)}  ${r.title}`);
+    }
+  } else {
+    core.info("no new blobs pushed — all layers were already present");
+  }
+
+  // Final status line, Docker `docker push` convention:
+  //   <ref>: digest: sha256:<hex> size: <manifest-bytes>
+  // followed by a totals summary.
   core.info(
-    `uploaded artifact "${resolvedTag}" (${blobCount} blob(s), ${transferStats.uploaded} B up, ${transferStats.deduplicated} B dedup)`,
+    `${resolvedTag}: digest: ${manifestDigestRef} size: ${manifestDigest.size}`,
+  );
+  core.info(
+    `  ${blobCount} blobs, ${transferStats.uploaded} B uploaded, ${transferStats.deduplicated} B deduplicated`,
   );
 }
 
@@ -322,11 +344,23 @@ interface UploadBlobOpts {
   compressionLevel?: number;
 }
 
+interface UploadBlobResult {
+  descriptor: Descriptor;
+  /** true if a PUT was issued; false if the blob already existed and we skipped. */
+  pushed: boolean;
+  /** raw sha256 hex (no "sha256:" prefix) of the (possibly compressed) blob. */
+  digestHex: string;
+  /** Size of the uploaded blob in bytes. */
+  size: number;
+  /** Title annotation (relative path for per-file, name.zip for archive). */
+  title: string;
+}
+
 async function uploadBlob(
   storage: StorageClient,
   absPath: string,
   opts: UploadBlobOpts,
-): Promise<Descriptor> {
+): Promise<UploadBlobResult> {
   let uploadPath = absPath;
   let cleanup: (() => Promise<void>) | undefined;
   let mediaType = opts.mediaType;
@@ -345,13 +379,15 @@ async function uploadBlob(
   }
 
   try {
-    const digest = opts.compress
-      ? await sha256File(uploadPath)
-      : await sha256File(absPath);
+    const digest = await sha256File(uploadPath);
     const digestRef = `sha256:${digest.hex}`;
     const key = `blobs/sha256/${digest.hex}`;
 
+    // HEAD-probe first; only PUT if the content-addressed blob isn't
+    // already present. This is the dedup contract — the whole reason
+    // for a content-addressed store.
     const existing = await storage.head(key);
+    let pushed = false;
     if (!existing) {
       await storage.putBlob(key, createReadStream(uploadPath), {
         contentType: mediaType,
@@ -359,11 +395,12 @@ async function uploadBlob(
         metadata: blobMetadata(digestRef, opts.retentionDays),
       });
       opts.stats.uploaded += digest.size;
+      pushed = true;
     } else {
       opts.stats.deduplicated += digest.size;
     }
 
-    const desc: Descriptor = {
+    const descriptor: Descriptor = {
       mediaType,
       digest: digestRef,
       size: digest.size,
@@ -372,7 +409,13 @@ async function uploadBlob(
         ...encodingAnnotation,
       },
     };
-    return desc;
+    return {
+      descriptor,
+      pushed,
+      digestHex: digest.hex,
+      size: digest.size,
+      title: opts.titleAnnotation,
+    };
   } finally {
     if (cleanup) await cleanup();
   }
