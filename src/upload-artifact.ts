@@ -283,7 +283,6 @@ async function main(): Promise<void> {
   // For pushed blobs whose gzipped form was actually stored, the
   // stored/wire size is shown in a trailing note.
   const pushed = layerResults.filter((r) => r.pushed);
-  const dedup = layerResults.filter((r) => !r.pushed);
 
   if (pushed.length > 0) {
     core.info(`pushed ${pushed.length} new blob(s):`);
@@ -295,13 +294,11 @@ async function main(): Promise<void> {
         core.info(line);
       }
     }
-  } else if (dedup.length > 0) {
-    core.info(
-      `no new blobs — all ${dedup.length} layer(s) already present in the bucket`,
-    );
-  } else {
+  } else if (layerResults.length === 0) {
     core.info("no layer blobs to report");
   }
+  // When all layers were dedup hits (pushed.length === 0 && layerResults.length > 0)
+  // we emit nothing here — the totals line below already reports deduplicated bytes.
 
   // Final status line, Docker `docker push` convention:
   //   <ref>: digest: sha256:<hex> size: <manifest-bytes>
