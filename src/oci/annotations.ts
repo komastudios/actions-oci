@@ -7,45 +7,35 @@ export interface StandardAnnotationContext {
   tag: string;
   name: string;
   retentionDays?: string;
-  // GitHub runtime context:
+  // GitHub runtime context. Only fields that are stable given the same
+  // commit + workflow inputs are carried into the manifest — run-id,
+  // run-attempt, per-run URLs, and wall-clock timestamps are deliberately
+  // omitted so two runs producing the same content at the same tag yield
+  // byte-identical manifests (and thus the same manifest digest).
   sha?: string;
   serverUrl?: string;
   repository?: string;
-  runId?: string;
-  runAttempt?: string;
   job?: string;
   workflow?: string;
   matrix?: string; // toJSON(matrix) if the caller chose to pass it through
   platform?: string; // optional input passthrough
-  now?: Date; // injectable for determinism in tests
 }
 
-/** Build the full annotation map (standard + context) for a manifest. */
+/** Build the deterministic annotation map (standard + context) for a manifest. */
 export function standardAnnotations(ctx: StandardAnnotationContext): Record<string, string> {
   const out: Record<string, string> = {};
   const put = (k: string, v: string | undefined): void => {
     if (v !== undefined && v !== "") out[k] = v;
   };
 
-  const now = (ctx.now ?? new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-
-  put("org.opencontainers.image.created", now);
   put("org.opencontainers.image.ref.name", ctx.tag);
   put("org.opencontainers.image.revision", ctx.sha);
   if (ctx.serverUrl && ctx.repository) {
     put("org.opencontainers.image.source", `${ctx.serverUrl}/${ctx.repository}`);
-    if (ctx.runId) {
-      put(
-        "org.opencontainers.image.url",
-        `${ctx.serverUrl}/${ctx.repository}/actions/runs/${ctx.runId}`,
-      );
-    }
   }
 
   put("io.github.actions.artifact.name", ctx.name);
   put("io.github.actions.artifact.retention-days", ctx.retentionDays);
-  put("io.github.actions.artifact.run-id", ctx.runId);
-  put("io.github.actions.artifact.run-attempt", ctx.runAttempt);
   put("io.github.actions.artifact.job", ctx.job);
   put("io.github.actions.artifact.workflow", ctx.workflow);
   put("io.github.actions.artifact.matrix", ctx.matrix);

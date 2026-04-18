@@ -5,45 +5,49 @@ import {
 } from "./annotations";
 
 describe("standardAnnotations", () => {
-  const now = new Date("2026-04-18T12:34:56.789Z");
-
-  test("emits the standard keys with a stable timestamp format", () => {
+  test("emits only deterministic keys (no timestamps, no run-id, no per-run URL)", () => {
     const ann = standardAnnotations({
       tag: "dist",
       name: "dist",
       sha: "c0ffee1234567890",
       serverUrl: "https://github.com",
       repository: "example-org/example-repo",
-      runId: "42",
-      runAttempt: "1",
       job: "build",
       workflow: "CI",
       retentionDays: "7",
-      now,
     });
     expect(ann).toEqual({
-      "org.opencontainers.image.created": "2026-04-18T12:34:56Z",
       "org.opencontainers.image.ref.name": "dist",
       "org.opencontainers.image.revision": "c0ffee1234567890",
       "org.opencontainers.image.source": "https://github.com/example-org/example-repo",
-      "org.opencontainers.image.url":
-        "https://github.com/example-org/example-repo/actions/runs/42",
       "io.github.actions.artifact.name": "dist",
       "io.github.actions.artifact.retention-days": "7",
-      "io.github.actions.artifact.run-id": "42",
-      "io.github.actions.artifact.run-attempt": "1",
       "io.github.actions.artifact.job": "build",
       "io.github.actions.artifact.workflow": "CI",
     });
   });
 
   test("omits keys with empty or missing values", () => {
-    const ann = standardAnnotations({ tag: "t", name: "t", now });
+    const ann = standardAnnotations({ tag: "t", name: "t" });
     expect(ann).toEqual({
-      "org.opencontainers.image.created": "2026-04-18T12:34:56Z",
       "org.opencontainers.image.ref.name": "t",
       "io.github.actions.artifact.name": "t",
     });
+  });
+
+  test("two calls with identical inputs produce identical output (no wall-clock leakage)", () => {
+    const args = {
+      tag: "dist",
+      name: "dist",
+      sha: "c0ffee",
+      serverUrl: "https://github.com",
+      repository: "org/repo",
+      job: "build",
+      workflow: "CI",
+    };
+    const a = standardAnnotations(args);
+    const b = standardAnnotations(args);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 });
 

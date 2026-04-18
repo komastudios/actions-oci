@@ -86,6 +86,10 @@ async function main(): Promise<void> {
   validateTag(resolvedTag);
 
   // ---- Build annotations ------------------------------------------------
+  // Only deterministic fields land in the manifest. Per-run values
+  // (GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, wall-clock timestamps) are
+  // intentionally omitted so identical content at the same tag yields
+  // byte-identical manifests across re-runs.
   const standard = standardAnnotations({
     tag: resolvedTag,
     name,
@@ -93,8 +97,6 @@ async function main(): Promise<void> {
     sha: process.env.GITHUB_SHA,
     serverUrl: process.env.GITHUB_SERVER_URL,
     repository: process.env.GITHUB_REPOSITORY,
-    runId: process.env.GITHUB_RUN_ID,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
     job: process.env.GITHUB_JOB,
     workflow: process.env.GITHUB_WORKFLOW,
   });
